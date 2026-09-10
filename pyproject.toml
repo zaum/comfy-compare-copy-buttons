@@ -1,6 +1,6 @@
 [project]
 name = "comfy-compare-copy-buttons"
-version = "0.3.0"
+version = "0.3.2"
 description = "Hover copy-to-clipboard button riding the divider of the built-in Compare Images node."
 readme = "README.md"
 requires-python = ">=3.9"

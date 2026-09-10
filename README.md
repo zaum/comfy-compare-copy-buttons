@@ -40,7 +40,7 @@ Details:
 ## Install
 
 Copy this folder (or its contents) into `ComfyUI/custom_nodes/`, e.g. as
-`ComfyUI/custom_nodes/comfy_compare_copy/`, then restart ComfyUI.
+`ComfyUI/custom_nodes/comfy_compare_copy_buttons/`, then restart ComfyUI.
 
 ## Compatibility
 

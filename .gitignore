@@ -1,0 +1,4 @@
+# Python bytecode / caches (regenerated on import)
+__pycache__/
+*.py[cod]
+*.pyo
