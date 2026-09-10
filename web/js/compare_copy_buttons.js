@@ -45,10 +45,11 @@ const TOP_ZONE_MIN_PX = 56;
 // clearly dominates, so the button hides instead of guessing.
 const CENTER_DEAD_ZONE_WIDTH = 8;
 
-// Keep the button fully inside the view when the divider is dragged
-// to an edge: the button position is clamped to this percent range.
-const BUTTON_EDGE_CLAMP_MIN = 6;
-const BUTTON_EDGE_CLAMP_MAX = 94;
+// How far the button may ride past the 0%/100% slider stops while staying
+// fully inside the view. Because the button is centered on the divider
+// (translateX(-50%)), it would hang off-screen at the extremes; the CSS
+// clamp() below keeps it fully visible instead of hiding it.
+const BUTTON_EDGE_MARGIN_PX = 24;
 
 // Same look as the hover buttons of the image preview
 // (see ImagePreview.vue `actionButtonClass`).
@@ -73,7 +74,15 @@ function ensureStyle() {
     ${VIEWPORT_SELECTOR} .cc-copy-btn {
       position: absolute;
       top: 8px;
-      left: 50%;
+      /* Ride the divider line (left is set from JS in %). The translateX
+         centers the button on the line; clamp() keeps the whole button
+         inside the view at the extreme left/right slider positions instead
+         of letting it hang off-screen. */
+      left: clamp(
+        ${BUTTON_EDGE_MARGIN_PX}px,
+        var(--cc-divider-x, 50%),
+        calc(100% - ${BUTTON_EDGE_MARGIN_PX}px)
+      );
       z-index: 20;
       opacity: 0;
       pointer-events: none;
@@ -274,9 +283,7 @@ function createCopyButton(viewport) {
 
 function applySideLabel(button) {
   const label =
-    button._ccSide === "right"
-      ? "Copy image B (after, right side) to clipboard"
-      : "Copy image A (before, left side) to clipboard";
+    button._ccSide === "right" ? "copy image_b" : "copy image_a";
   button.title = label;
   button.setAttribute("aria-label", label);
 }
@@ -295,16 +302,11 @@ function resolveDividerSide(viewport, hasBefore, hasAfter) {
   return null;
 }
 
-/** Keep the button centered on the divider line, clamped inside the view. */
-function positionButtonOnDivider(button, slider) {
-  const percent =
-    slider === null
-      ? 50
-      : Math.min(
-          BUTTON_EDGE_CLAMP_MAX,
-          Math.max(BUTTON_EDGE_CLAMP_MIN, slider)
-        );
-  button.style.left = `${percent}%`;
+/** Keep the button centered on the divider line; the CSS clamp() keeps it
+ * fully inside the view at the extreme left/right slider positions. */
+function positionButtonOnDivider(viewport, button, slider) {
+  const percent = slider === null ? 50 : slider;
+  viewport.style.setProperty("--cc-divider-x", `${percent}%`);
 }
 
 function setVisible(button, visible) {
@@ -333,7 +335,7 @@ function updateButton(viewport, state, clientY) {
 
   state.button._ccSide = side;
   applySideLabel(state.button);
-  positionButtonOnDivider(state.button, getSliderPercent(viewport));
+  positionButtonOnDivider(viewport, state.button, getSliderPercent(viewport));
   setVisible(state.button, true);
 }
 
@@ -376,7 +378,7 @@ function enhanceViewport(viewport) {
     }
     state.button._ccSide = side;
     applySideLabel(state.button);
-    positionButtonOnDivider(state.button, getSliderPercent(viewport));
+    positionButtonOnDivider(viewport, state.button, getSliderPercent(viewport));
   });
   domObserver.observe(viewport, {
     childList: true,
