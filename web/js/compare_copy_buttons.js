@@ -283,7 +283,7 @@ function createCopyButton(viewport) {
 
 function applySideLabel(button) {
   const label =
-    button._ccSide === "right" ? "copy image_b" : "copy image_a";
+    button._ccSide === "right" ? "Copy image_b" : "Copy image_a";
   button.title = label;
   button.setAttribute("aria-label", label);
 }
