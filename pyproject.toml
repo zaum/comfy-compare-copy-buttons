@@ -1,0 +1,13 @@
+[project]
+name = "comfy-compare-copy-buttons"
+version = "0.2.0"
+description = "Hover copy-to-clipboard buttons for the built-in Compare Images node."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "GPL-3.0-only" }
+
+[tool.comfy]
+DisplayName = "Compare Copy Buttons"
+
+[tool.setuptools.package-data]
+"*" = ["*.*"]
