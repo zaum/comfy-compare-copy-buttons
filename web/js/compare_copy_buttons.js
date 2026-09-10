@@ -1,19 +1,28 @@
 /**
- * Compare Images: hover copy-to-clipboard button for the active side.
+ * Compare Images: hover copy-to-clipboard button riding the divider line.
  *
  * Enhances the built-in "Compare Images" (ImageCompare) node in place.
  * When the mouse is over the TOP part of the compare view, a single button
- * appears in the corner of the side that currently covers the larger area:
- * top-left (copies image A / before) while the before image dominates
- * (slider at/above 50%), top-right (copies image B / after) otherwise.
- * The inactive side never shows a button.
+ * sits on the divider line (top edge, centered on the slider position) and
+ * moves together with it, so it is easy to click. It always copies the
+ * currently dominant side: image A (before) while the before image covers
+ * the larger area (slider above 50% + dead zone), image B (after) otherwise.
+ *
+ * Dead zones (the button stays hidden there, so a click can never be
+ * ambiguous):
+ * - vertical: only the top strip of the view is sensitive, dragging the
+ *   slider in the middle of the node never shows the button;
+ * - horizontal: while the slider is inside a narrow centered band
+ *   (CENTER_DEAD_ZONE_WIDTH, around 50%) neither side clearly dominates,
+ *   so the button hides instead of guessing.
  *
  * - Look: the button reuses the same dark pill style as the hover buttons on
  *   the Load Image / Preview Image node, with a "copy" glyph (the action of
  *   the "Copy Image" right-click menu entry).
- * - The button is only sensitive in the top strip of the view, so dragging
- *   the compare slider left/right in the middle of the node never shows it.
- * - Clicking the button copies the active side's currently displayed image
+ * - Hovering the button freezes the slider underneath (its pointer/mouse
+ *   events never reach the compare logic), so the button does not slip away
+ *   from under the cursor before the click.
+ * - Clicking the button copies the dominant side's currently displayed image
  *   (batch-aware: the image actually visible on that side) to the OS
  *   clipboard, using the same fetch + ClipboardItem logic (with PNG fallback)
  *   as the core "Copy Image" context menu entry.
@@ -26,10 +35,20 @@ const EXTENSION_NAME = "ComfyCompare.CopyButtons";
 // Test id rendered by the core WidgetImageCompare.vue component.
 const VIEWPORT_SELECTOR = '[data-testid="image-compare-viewport"]';
 
-// The buttons only appear while the mouse is inside this top strip,
-// so slider drags in the middle of the node never trigger them.
+// The button only appears while the mouse is inside this top strip,
+// so slider drags in the middle of the node never trigger it.
 const TOP_ZONE_RATIO = 0.34;
 const TOP_ZONE_MIN_PX = 56;
+
+// Horizontal dead zone around the center, in slider percent points.
+// While the divider is inside 50% +/- this half-width, neither side
+// clearly dominates, so the button hides instead of guessing.
+const CENTER_DEAD_ZONE_WIDTH = 8;
+
+// Keep the button fully inside the view when the divider is dragged
+// to an edge: the button position is clamped to this percent range.
+const BUTTON_EDGE_CLAMP_MIN = 6;
+const BUTTON_EDGE_CLAMP_MAX = 94;
 
 // Same look as the hover buttons of the image preview
 // (see ImagePreview.vue `actionButtonClass`).
@@ -54,18 +73,17 @@ function ensureStyle() {
     ${VIEWPORT_SELECTOR} .cc-copy-btn {
       position: absolute;
       top: 8px;
+      left: 50%;
       z-index: 20;
       opacity: 0;
       pointer-events: none;
-      transform: translateY(-4px);
+      transform: translate(-50%, -4px);
       transition: opacity 150ms ease, transform 150ms ease;
     }
-    ${VIEWPORT_SELECTOR} .cc-copy-btn.cc-left { left: 8px; }
-    ${VIEWPORT_SELECTOR} .cc-copy-btn.cc-right { right: 8px; }
     ${VIEWPORT_SELECTOR} .cc-copy-btn.cc-visible {
       opacity: 1;
       pointer-events: auto;
-      transform: translateY(0);
+      transform: translate(-50%, 0);
     }
   `;
   document.head.appendChild(style);
@@ -194,10 +212,11 @@ function flash(button, ok) {
   }, 1200);
 }
 
-async function handleCopyClick(button, side) {
+async function handleCopyClick(button) {
   const viewport = button._ccViewport;
   if (!viewport || !viewport.isConnected) return;
   const { before, after } = getCompareImages(viewport);
+  const side = button._ccSide === "right" ? "right" : "left";
   const img = side === "left" ? before : after;
   if (!img || !img.src) {
     flash(button, false);
@@ -220,35 +239,79 @@ async function handleCopyClick(button, side) {
   }
 }
 
-function createCopyButton(viewport, side) {
+function createCopyButton(viewport) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `${ACTION_BUTTON_CLASS} cc-copy-btn cc-${side}`;
-  const label =
-    side === "left"
-      ? "Copy image A (before, left side) to clipboard"
-      : "Copy image B (after, right side) to clipboard";
-  button.title = label;
-  button.setAttribute("aria-label", label);
+  button.className = `${ACTION_BUTTON_CLASS} cc-copy-btn`;
+  button._ccSide = "left";
+  applySideLabel(button);
   button.innerHTML = ICON_COPY;
   button._ccViewport = viewport;
-  // The compare slider follows the mouse anywhere over the view; stop the
-  // button's own press/click events from reaching the canvas/slider logic.
-  for (const type of ["pointerdown", "mousedown", "mouseup", "click", "dblclick"]) {
+  // The compare slider follows the mouse anywhere over the view: stop the
+  // button's own events from reaching the slider logic, so hovering the
+  // button freezes the divider underneath and the button cannot slip away
+  // from under the cursor before the click.
+  for (const type of [
+    "pointerdown",
+    "pointermove",
+    "pointerenter",
+    "mousedown",
+    "mousemove",
+    "mouseenter",
+    "mouseover",
+    "mouseup",
+    "click",
+    "dblclick",
+  ]) {
     button.addEventListener(type, (event) => event.stopPropagation());
   }
   button.addEventListener("click", (event) => {
     event.preventDefault();
-    void handleCopyClick(button, side);
+    void handleCopyClick(button);
   });
   return button;
+}
+
+function applySideLabel(button) {
+  const label =
+    button._ccSide === "right"
+      ? "Copy image B (after, right side) to clipboard"
+      : "Copy image A (before, left side) to clipboard";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+/**
+ * Decide which side the divider button currently belongs to, or null while
+ * it must stay hidden (center dead zone).
+ */
+function resolveDividerSide(viewport, hasBefore, hasAfter) {
+  if (hasBefore && !hasAfter) return "left";
+  if (hasAfter && !hasBefore) return "right";
+  const slider = getSliderPercent(viewport);
+  if (slider === null) return "left";
+  if (slider > 50 + CENTER_DEAD_ZONE_WIDTH / 2) return "left";
+  if (slider < 50 - CENTER_DEAD_ZONE_WIDTH / 2) return "right";
+  return null;
+}
+
+/** Keep the button centered on the divider line, clamped inside the view. */
+function positionButtonOnDivider(button, slider) {
+  const percent =
+    slider === null
+      ? 50
+      : Math.min(
+          BUTTON_EDGE_CLAMP_MAX,
+          Math.max(BUTTON_EDGE_CLAMP_MIN, slider)
+        );
+  button.style.left = `${percent}%`;
 }
 
 function setVisible(button, visible) {
   button.classList.toggle("cc-visible", visible);
 }
 
-function updateButtons(viewport, state, clientY) {
+function updateButton(viewport, state, clientY) {
   const rect = viewport.getBoundingClientRect();
   const topZone = Math.max(TOP_ZONE_MIN_PX, rect.height * TOP_ZONE_RATIO);
   const inTop = clientY >= rect.top && clientY <= rect.top + topZone;
@@ -258,25 +321,20 @@ function updateButtons(viewport, state, clientY) {
   const hasAfter = !!after;
 
   if (!inTop || (!hasBefore && !hasAfter)) {
-    setVisible(state.leftButton, false);
-    setVisible(state.rightButton, false);
+    setVisible(state.button, false);
     return;
   }
 
-  // Only the side that currently covers the larger area gets a button:
-  // slider at/above 50% means the left (before) image dominates.
-  let dominant = null;
-  if (hasBefore && hasAfter) {
-    const slider = getSliderPercent(viewport);
-    dominant = slider === null || slider >= 50 ? "left" : "right";
-  } else if (hasBefore) {
-    dominant = "left";
-  } else {
-    dominant = "right";
+  const side = resolveDividerSide(viewport, hasBefore, hasAfter);
+  if (side === null || (side === "left" && !hasBefore) || (side === "right" && !hasAfter)) {
+    setVisible(state.button, false);
+    return;
   }
 
-  setVisible(state.leftButton, dominant === "left" && hasBefore);
-  setVisible(state.rightButton, dominant === "right" && hasAfter);
+  state.button._ccSide = side;
+  applySideLabel(state.button);
+  positionButtonOnDivider(state.button, getSliderPercent(viewport));
+  setVisible(state.button, true);
 }
 
 function enhanceViewport(viewport) {
@@ -288,27 +346,37 @@ function enhanceViewport(viewport) {
   ensureStyle();
 
   const state = {
-    leftButton: createCopyButton(viewport, "left"),
-    rightButton: createCopyButton(viewport, "right"),
+    button: createCopyButton(viewport),
+    lastClientY: null,
   };
-  viewport.appendChild(state.leftButton);
-  viewport.appendChild(state.rightButton);
+  viewport.appendChild(state.button);
   viewport._ccState = state;
 
   viewport.addEventListener("pointermove", (event) => {
-    updateButtons(viewport, state, event.clientY);
+    state.lastClientY = event.clientY;
+    updateButton(viewport, state, event.clientY);
   });
   viewport.addEventListener("pointerleave", () => {
-    setVisible(state.leftButton, false);
-    setVisible(state.rightButton, false);
+    setVisible(state.button, false);
   });
-  // Keep the active button in sync when images/slider change without mouse
-  // input (batch navigation, new execution): hide the side that has no image
-  // or is no longer the dominant one.
+  // Keep the button in sync when images/slider change without mouse input
+  // (batch navigation, new execution, slider drag): follow the divider and
+  // hide inside the dead zone or when the dominant side has no image.
   const domObserver = new MutationObserver(() => {
+    const lastY = state.lastClientY;
+    if (typeof lastY === "number") {
+      updateButton(viewport, state, lastY);
+      return;
+    }
     const { before, after } = getCompareImages(viewport);
-    if (!before) setVisible(state.leftButton, false);
-    if (!after) setVisible(state.rightButton, false);
+    const side = resolveDividerSide(viewport, !!before, !!after);
+    if (side === null) {
+      setVisible(state.button, false);
+      return;
+    }
+    state.button._ccSide = side;
+    applySideLabel(state.button);
+    positionButtonOnDivider(state.button, getSliderPercent(viewport));
   });
   domObserver.observe(viewport, {
     childList: true,

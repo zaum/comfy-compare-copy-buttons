@@ -5,19 +5,27 @@ Frontend-only extension for ComfyUI. It enhances the built-in
 
 ## What it does
 
-When the mouse is over the **top part** of the compare view, **one** button
-appears - in the corner of the **active** side, i.e. the side that currently
-covers the larger area:
+When the mouse is over the **top part** of the compare view, a **single**
+button sits on the **divider line** (top edge, centered on the slider) and
+moves together with it, so it is easy to click. It always copies the
+**dominant** side:
 
-- slider at/above 50%: button in the **top-left corner**, copies
-  **image A (before)**,
-- slider below 50%: button in the **top-right corner**, copies
-  **image B (after)**.
+- slider above 50% + dead zone: copies **image A (before)**,
+- slider below 50% - dead zone: copies **image B (after)**.
 
-The inactive side never shows a button. Clicking the button copies that
-side's currently displayed image (batch-aware) to the OS clipboard, using
-the same logic as the core "Copy Image" right-click menu entry
-(full-resolution fetch, PNG fallback).
+Two dead zones keep clicks unambiguous:
+
+- vertical: only the top strip of the view (top ~34%, min 56 px) is
+  sensitive, so dragging the slider in the middle never shows the button;
+- horizontal: while the slider is inside a narrow centered band
+  (8 percentage points around 50%), neither side clearly dominates, so the
+  button hides instead of guessing.
+
+Clicking the button copies that side's currently displayed image
+(batch-aware) to the OS clipboard, using the same logic as the core
+"Copy Image" right-click menu entry (full-resolution fetch, PNG fallback).
+Hovering the button freezes the slider underneath, so the button cannot
+slip away from under the cursor before the click.
 
 Details:
 
@@ -25,6 +33,7 @@ Details:
   Load Image / Preview Image node, with a "copy" glyph.
 - It only reacts in the top strip of the view (top ~34%, min 56 px), so
   dragging the compare slider in the middle of the node never shows it.
+- It stays hidden while the slider is inside the 8-point center dead zone.
 - With a single image (no compare pair), the button of the available side
   is shown.
 
