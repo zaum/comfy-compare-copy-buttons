@@ -6,9 +6,9 @@ Adds a **Copy to clipboard hover button** to the default "Compare Image" node.
 
 ## Install
 
-Copy this subfolder (the one containing this README) into `ComfyUI/custom_nodes/`
+Drag this repo's `comfy-compare-copy-buttons` folder into `ComfyUI/custom_nodes/`
 so it ends up as `ComfyUI/custom_nodes/comfy-compare-copy-buttons/`, then restart
-ComfyUI.
+ComfyUI. That folder contains only what the node needs — nothing else to edit.
 
 > Important: the folder name must not contain spaces. The ComfyUI frontend
 > requests the extension script at
