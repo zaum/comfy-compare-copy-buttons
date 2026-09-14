@@ -1,4 +1,4 @@
-# Compare Copy Buttons
+# Compare Images + Copy Buttons
 
 Adds a **Copy to clipboard hover button** to the default "Compare Image" node.
 
