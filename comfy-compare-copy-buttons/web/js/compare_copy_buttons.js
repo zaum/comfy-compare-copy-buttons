@@ -43,7 +43,7 @@ const TOP_ZONE_MIN_PX = 56;
 // Horizontal dead zone around the center, in slider percent points.
 // While the divider is inside 50% +/- this half-width, neither side
 // clearly dominates, so the button hides instead of guessing.
-const CENTER_DEAD_ZONE_WIDTH = 8;
+const CENTER_DEAD_ZONE_WIDTH = 12;
 
 // How far the button may ride past the 0%/100% slider stops while staying
 // fully inside the view. Because the button is centered on the divider
