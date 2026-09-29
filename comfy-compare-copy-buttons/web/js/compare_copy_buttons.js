@@ -26,6 +26,10 @@
  *   (batch-aware: the image actually visible on that side) to the OS
  *   clipboard, using the same fetch + ClipboardItem logic (with PNG fallback)
  *   as the core "Copy Image" context menu entry.
+ * - Info line: a small caption under the compare view lists the pixel size of
+ *   each side ("image_a 1024x1024") plus whether that image really contains
+ *   transparent pixels ("alpha: yes"). Both come from the already loaded
+ *   <img> elements, so no extra image download is needed.
  */
 
 import { app } from "../../../scripts/app.js";
@@ -58,6 +62,13 @@ const ACTION_BUTTON_CLASS =
   "bg-base-foreground p-2 text-base-background shadow-interface transition-colors " +
   "duration-200 hover:bg-base-foreground/90 focus-visible:outline-none " +
   "focus-visible:ring-2 focus-visible:ring-base-foreground focus-visible:ring-offset-2";
+
+// The transparency probe reads its pixels from a downscaled canvas copy with
+// at most this long edge. A smaller copy keeps large images from stalling the
+// UI, and it stays exact for the question being asked: the browser averages
+// the source pixels while scaling, so an image without transparency still
+// probes fully opaque, while any transparent area survives as a partial alpha.
+const ALPHA_PROBE_MAX_PX = 512;
 
 const ICON_COPY = '<i class="icon-[lucide--copy] size-4" aria-hidden="true"></i>';
 const ICON_OK =
@@ -93,6 +104,31 @@ function ensureStyle() {
       opacity: 1;
       pointer-events: auto;
       transform: translate(-50%, 0);
+    }
+
+    /* Info line, rendered as a sibling right below the compare view.
+       Font size and horizontal padding match the batch navigation bar at the
+       top of the same widget (text-xs, px-2), so the two lines read as one. */
+    .cc-image-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-shrink: 0;
+      padding: 2px 8px 0;
+      font-size: var(--text-xs, 0.75rem);
+      line-height: var(--tw-leading, var(--text-xs--line-height, 1rem));
+      color: var(--color-muted-foreground, #8a8a8a);
+      pointer-events: none;
+      user-select: none;
+    }
+    .cc-image-info[hidden] {
+      display: none;
+    }
+    .cc-image-info-side {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
   `;
   document.head.appendChild(style);
@@ -133,6 +169,119 @@ function getSliderPercent(viewport) {
   const value = parseFloat(handle.style.left);
   if (!Number.isFinite(value)) return null;
   return Math.min(100, Math.max(0, value));
+}
+
+/**
+ * Does this image really contain transparent pixels?
+ * Returns true/false, or null when it cannot be told (not decoded yet, no
+ * canvas, or a cross-origin image whose canvas stays tainted).
+ * The answer is cached on the element, because the viewport mutation observer
+ * asks again on every slider move.
+ */
+function probeTransparency(img) {
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  if (!width || !height) return null;
+
+  const cached = img._ccProbe;
+  if (cached && cached.width === width && cached.height === height) {
+    return cached.alpha;
+  }
+
+  let alpha = null;
+  try {
+    const scale = Math.min(1, ALPHA_PROBE_MAX_PX / Math.max(width, height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (ctx) {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      // Throws on a tainted canvas, which is what a cross-origin image gives.
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      alpha = false;
+      for (let i = 3; i < data.length; i += 4) {
+        if (data[i] < 255) {
+          alpha = true;
+          break;
+        }
+      }
+    }
+  } catch (error) {
+    alpha = null;
+  }
+
+  img._ccProbe = { width, height, alpha };
+  return alpha;
+}
+
+/** Caption text for one side, or null while its image is not decoded yet. */
+function describeImageSide(img, label) {
+  const width = img.naturalWidth;
+  const height = img.naturalHeight;
+  if (!width || !height) return null;
+
+  const alpha = probeTransparency(img);
+  const alphaLabel = alpha === null ? "unknown" : alpha ? "yes" : "no";
+  return {
+    text: `${label} ${width}×${height} · alpha: ${alphaLabel}`,
+    title:
+      alpha === null
+        ? `${label}: ${width}×${height}, transparency could not be read`
+        : alpha
+          ? `${label}: ${width}×${height}, contains transparent pixels`
+          : `${label}: ${width}×${height}, fully opaque (no transparent pixels)`,
+  };
+}
+
+function createImageInfo() {
+  const info = document.createElement("div");
+  info.className = "cc-image-info";
+  info.hidden = true;
+  return info;
+}
+
+/**
+ * Put the info line right below the compare view. Vue recreates the viewport
+ * element when the node switches between the empty state and the compare
+ * view, so a label left over from a previous viewport is removed first.
+ */
+function mountImageInfo(viewport, info) {
+  const parent = viewport.parentElement;
+  if (!parent) return;
+  for (const stale of parent.querySelectorAll(":scope > .cc-image-info")) {
+    stale.remove();
+  }
+  parent.insertBefore(info, viewport.nextSibling);
+}
+
+function updateImageInfo(viewport, state) {
+  const info = state.info;
+  if (!info) return;
+
+  const { before, after } = getCompareImages(viewport);
+  // Named after the node's own inputs, so the caption matches the labels on
+  // the node body (image_a = before, image_b = after).
+  const sides = [
+    before ? describeImageSide(before, "image_a") : null,
+    after ? describeImageSide(after, "image_b") : null,
+  ].filter(Boolean);
+
+  info.hidden = sides.length === 0;
+  // The mutation observer runs on every divider move, so only touch the DOM
+  // when the caption actually changed.
+  const signature = sides.map((side) => side.text).join("|");
+  if (info._ccSignature === signature) return;
+  info._ccSignature = signature;
+  info.replaceChildren(
+    ...sides.map((side) => {
+      const span = document.createElement("span");
+      span.className = "cc-image-info-side";
+      span.title = side.title;
+      span.textContent = side.text;
+      return span;
+    })
+  );
 }
 
 async function fetchImageBlob(url) {
@@ -349,10 +498,23 @@ function enhanceViewport(viewport) {
 
   const state = {
     button: createCopyButton(viewport),
+    info: createImageInfo(),
     lastClientY: null,
   };
   viewport.appendChild(state.button);
+  mountImageInfo(viewport, state.info);
   viewport._ccState = state;
+  updateImageInfo(viewport, state);
+
+  // An <img> fires "load" without bubbling, so listen in the capture phase:
+  // natural size and pixels only become readable once it finished decoding.
+  viewport.addEventListener(
+    "load",
+    () => {
+      updateImageInfo(viewport, state);
+    },
+    true
+  );
 
   viewport.addEventListener("pointermove", (event) => {
     state.lastClientY = event.clientY;
@@ -365,6 +527,7 @@ function enhanceViewport(viewport) {
   // (batch navigation, new execution, slider drag): follow the divider and
   // hide inside the dead zone or when the dominant side has no image.
   const domObserver = new MutationObserver(() => {
+    updateImageInfo(viewport, state);
     const lastY = state.lastClientY;
     if (typeof lastY === "number") {
       updateButton(viewport, state, lastY);
@@ -398,10 +561,11 @@ app.registerExtension({
   name: EXTENSION_NAME,
   async setup() {
     if (typeof window.ClipboardItem === "undefined") {
+      // Only the copy button needs this API; the info line still works, and
+      // handleCopyClick() bails out on its own.
       console.warn(
         "[CompareCopy] ClipboardItem API is not available, copy buttons are disabled."
       );
-      return;
     }
     ensureStyle();
     scanForViewports();
